@@ -2,6 +2,30 @@
 
 set -e
 
+# usage: file_env VAR [DEFAULT]
+#    ie: file_env 'XYZ_DB_PASSWORD' 'example'
+# (will allow for "$XYZ_DB_PASSWORD_FILE" to fill in the value of
+#  "$XYZ_DB_PASSWORD" from a file, especially for Docker's secrets feature)
+file_env() {
+	local var="$1"
+	local fileVar="${var}_FILE"
+	local def="${2:-}"
+	if [ "${!var:-}" ] && [ "${!fileVar:-}" ]; then
+		echo >&2 "error: both $var and $fileVar are set (but are exclusive)"
+		exit 1
+	fi
+	local val="$def"
+	if [ "${!var:-}" ]; then
+		val="${!var}"
+	elif [ "${!fileVar:-}" ]; then
+		val="$(< "${!fileVar}")"
+	else
+                exit 1
+        fi
+	export "$var"="$val"
+	unset "$fileVar"
+}
+
 if [[ "$1" == apache2* ]] || [ "$1" == php-fpm ]; then
         if [ -n "$MYSQL_PORT_3306_TCP" ]; then
                 if [ -z "$JOOMLA_DB_HOST" ]; then
@@ -27,10 +51,14 @@ if [[ "$1" == apache2* ]] || [ "$1" == php-fpm ]; then
         fi
         : ${JOOMLA_DB_NAME:=joomla}
 
-        if [ -z "$JOOMLA_DB_PASSWORD" ] && [ "$JOOMLA_DB_PASSWORD_ALLOW_EMPTY" != 'yes' ]; then
-                echo >&2 "error: missing required JOOMLA_DB_PASSWORD environment variable"
-                echo >&2 "  Did you forget to -e JOOMLA_DB_PASSWORD=... ?"
-                echo >&2
+        # Support of Docker secrets in password
+        file_env() 'JOOMLA_DB_PASSWORD'
+        local exitStatus = $?
+        if [ exitStatus -ne 0 ] && [ "$JOOMLA_DB_PASSWORD_ALLOW_EMPTY" != 'yes' ]; then
+                echo >&2 "error: missing required JOOMLA_DB_PASSWORD or"
+                echo >&2 "JOOMLA_DB_PASSWORD_FILE environment variable"
+                echo >&2 "  Did you forget to -e JOOMLA_DB_PASSWORD=... or"
+                echo >&2 "  JOOMLA_DB_PASSWORD_FILE=/path/to/your/password_file ?"
                 echo >&2 "  (Also of interest might be JOOMLA_DB_USER and JOOMLA_DB_NAME.)"
                 exit 1
         fi
